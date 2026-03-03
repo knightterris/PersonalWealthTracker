@@ -1,0 +1,5 @@
+{
+  "name": "ZenWealth",
+  "description": "A minimalist personal wealth tracker for income, expenses, and savings.",
+  "requestFramePermissions": []
+}
