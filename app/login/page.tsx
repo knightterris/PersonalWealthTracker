@@ -1,24 +1,45 @@
 'use client';
 
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithRedirect, getRedirectResult, GoogleAuthProvider } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth-provider';
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { LogIn } from 'lucide-react';
+import { LogIn, Loader2 } from 'lucide-react';
 
 export default function LoginPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
   const [error, setError] = useState<string | null>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   useEffect(() => {
     if (user && !loading) {
       router.push('/');
     }
   }, [user, loading, router]);
+
+  useEffect(() => {
+    if (!auth) return;
+
+    // Handle the result of the redirect
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result) {
+          router.push('/');
+        }
+      })
+      .catch((err: any) => {
+        console.error("Redirect login failed", err);
+        if (err.code === 'auth/unauthorized-domain') {
+          setError("This domain is not authorized in your Firebase project. Please add the app URLs to the 'Authorized domains' list in the Firebase Console (Authentication > Sign-in method).");
+        } else if (err.code !== 'auth/popup-closed-by-user') {
+          setError(`Login failed: ${err.message}`);
+        }
+      });
+  }, [router]);
 
   const handleLogin = async () => {
     setError(null);
@@ -27,16 +48,16 @@ export default function LoginPage() {
       return;
     }
     try {
-      await signInWithPopup(auth, googleProvider);
-      router.push('/');
+      setIsRedirecting(true);
+      // signInWithRedirect is much more reliable on mobile browsers and PWAs
+      await signInWithRedirect(auth, googleProvider);
     } catch (err: any) {
+      setIsRedirecting(false);
       console.error("Login failed", err);
       if (err.code === 'auth/configuration-not-found') {
         setError("Google Sign-in is not enabled in your Firebase project. Please enable it in the Firebase Console: Authentication > Sign-in method > Add Google.");
       } else if (err.code === 'auth/unauthorized-domain') {
         setError("This domain is not authorized in your Firebase project. Please add the app URLs to the 'Authorized domains' list in the Firebase Console (Authentication > Sign-in method).");
-      } else if (err.code === 'auth/operation-not-allowed') {
-        setError("This operation is not allowed. Please check your Firebase Console settings.");
       } else {
         setError(`Login failed: ${err.message}`);
       }
@@ -89,10 +110,17 @@ export default function LoginPage() {
 
         <button
           onClick={handleLogin}
-          className="w-full flex items-center justify-center gap-3 bg-white border border-stone-200 px-6 py-4 rounded-2xl shadow-sm hover:shadow-md transition-all active:scale-95 group"
+          disabled={isRedirecting}
+          className="w-full flex items-center justify-center gap-3 bg-white border border-stone-200 px-6 py-4 rounded-2xl shadow-sm hover:shadow-md transition-all active:scale-95 group disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <LogIn className="w-5 h-5 text-stone-400 group-hover:text-stone-900 transition-colors" />
-          <span className="font-medium text-stone-700">Continue with Google</span>
+          {isRedirecting ? (
+            <Loader2 className="w-5 h-5 text-stone-400 animate-spin" />
+          ) : (
+            <LogIn className="w-5 h-5 text-stone-400 group-hover:text-stone-900 transition-colors" />
+          )}
+          <span className="font-medium text-stone-700">
+            {isRedirecting ? 'Redirecting...' : 'Continue with Google'}
+          </span>
         </button>
 
         <p className="text-xs text-stone-400 px-8 leading-relaxed">
