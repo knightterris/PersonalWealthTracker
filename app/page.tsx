@@ -6,19 +6,43 @@ import { useEffect, useState } from 'react';
 import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, ArrowUpRight, ArrowDownLeft, Wallet, LogOut, History, PieChart as PieChartIcon, Settings, Target, BarChart3, Calendar, Trash2, Edit2, X, Copy, Check } from 'lucide-react';
+import { Plus, ArrowUpRight, ArrowDownLeft, Wallet, LogOut, History, Settings, Target, BarChart3, Calendar, Trash2, Edit2, X, Copy, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import Link from 'next/link';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 
 interface Transaction {
   id: string;
+  userId?: string;
   type: 'income' | 'expense' | 'saving';
   amount: number;
   category: string;
-  date: any;
+  date?: Timestamp | null;
   description: string;
 }
+
+const FIRESTORE_RULES = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /transactions/{transactionId} {
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+    }
+
+    match /settings/{userId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == userId;
+    }
+  }
+}`;
+
+const toDateSafe = (value?: Timestamp | null) => {
+  if (!value || typeof value.toDate !== 'function') return null;
+  const date = value.toDate();
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 export default function Dashboard() {
   const { user, loading } = useAuth();
@@ -114,9 +138,11 @@ export default function Dashboard() {
   useEffect(() => {
     if (!user || !db) return;
 
+    const firestore = db;
+
     const fetchSettings = async () => {
       try {
-        const settingsDoc = await getDoc(doc(db, 'settings', user.uid));
+        const settingsDoc = await getDoc(doc(firestore, 'settings', user.uid));
         if (settingsDoc.exists()) {
           setDailyLimit(settingsDoc.data().dailyLimit || 0);
         }
@@ -144,10 +170,9 @@ export default function Dashboard() {
 
   const todaySpending = transactions
     .filter(tx => {
-      if (!tx.date) return false;
-      const txDate = tx.date.toDate();
+      const txDate = toDateSafe(tx.date);
       const today = new Date();
-      return tx.type === 'expense' && 
+      return !!txDate && tx.type === 'expense' && 
              txDate.getDate() === today.getDate() &&
              txDate.getMonth() === today.getMonth() &&
              txDate.getFullYear() === today.getFullYear();
@@ -158,15 +183,17 @@ export default function Dashboard() {
     e.preventDefault();
     if (!user || !newTx.amount || !db) return;
 
+    const firestore = db;
+
     if (editingTx) {
-      await updateDoc(doc(db, 'transactions', editingTx.id), {
+      await updateDoc(doc(firestore, 'transactions', editingTx.id), {
         type: newTx.type,
         amount: parseFloat(newTx.amount),
         category: newTx.category,
         description: newTx.description,
       });
     } else {
-      await addDoc(collection(db, 'transactions'), {
+      await addDoc(collection(firestore, 'transactions'), {
         userId: user.uid,
         type: newTx.type,
         amount: parseFloat(newTx.amount),
@@ -183,7 +210,8 @@ export default function Dashboard() {
 
   const handleDeleteTx = async (id: string) => {
     if (!db) return;
-    await deleteDoc(doc(db, 'transactions', id));
+    const firestore = db;
+    await deleteDoc(doc(firestore, 'transactions', id));
   };
 
   const startEdit = (tx: Transaction) => {
@@ -201,35 +229,35 @@ export default function Dashboard() {
     e.preventDefault();
     if (!user || !db) return;
 
-    await setDoc(doc(db, 'settings', user.uid), {
+    const firestore = db;
+
+    await setDoc(doc(firestore, 'settings', user.uid), {
       dailyLimit: dailyLimit
     }, { merge: true });
 
     setIsSettingsOpen(false);
   };
 
-  const copyRules = () => {
-    const rules = `rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    // Master Unlock Rule: Allows you to access all your data
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+  const copyRules = async () => {
+    try {
+      await navigator.clipboard.writeText(FIRESTORE_RULES);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy rules', error);
     }
-  }
-}`;
-    navigator.clipboard.writeText(rules);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   if (loading || !user) return null;
 
   // Prepare chart data
-  const chartData = transactions.slice().reverse().map(tx => ({
-    date: tx.date ? format(tx.date.toDate(), 'MMM d') : '',
-    amount: tx.type === 'expense' ? -tx.amount : tx.amount,
-  }));
+  const chartData = transactions.slice().reverse().map(tx => {
+    const txDate = toDateSafe(tx.date);
+    return {
+      date: txDate ? format(txDate, 'MMM d') : '',
+      amount: tx.type === 'expense' ? -tx.amount : tx.amount,
+    };
+  });
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-stone-50 pb-24">
@@ -275,7 +303,7 @@ service cloud.firestore {
             </div>
             
             <p className="text-xs text-rose-600 leading-relaxed">
-              Your database is still locked. To fix this instantly, please use the <b>Master Unlock</b> rules below. Copy and paste them into your <b>Firebase Console &gt; Firestore Database &gt; Rules</b> tab.
+              Your database rules need to allow each signed-in user to access <b>only their own data</b>. Copy these rules into <b>Firebase Console &gt; Firestore Database &gt; Rules</b> and publish them.
             </p>
 
             <div className="bg-white/50 p-3 rounded-xl border border-rose-100 space-y-2">
@@ -294,21 +322,14 @@ service cloud.firestore {
 
             <div className="relative group">
               <pre className="text-[10px] bg-white border border-rose-100 p-4 rounded-2xl overflow-x-auto text-rose-800 font-mono leading-tight max-h-48">
-{`rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
-    }
-  }
-}`}
+{FIRESTORE_RULES}
               </pre>
               <button 
                 onClick={copyRules}
                 className="absolute top-2 right-2 p-2 bg-stone-900 text-white rounded-lg shadow-lg active:scale-95 transition-all flex items-center gap-2 text-[10px]"
               >
                 {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                {copied ? 'Copied!' : 'Copy Master Rules'}
+                {copied ? 'Copied!' : 'Copy Safe Rules'}
               </button>
             </div>
 
@@ -442,7 +463,7 @@ service cloud.firestore {
       <section className="px-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-medium text-stone-900">Recent Activity</h3>
-          <button className="text-xs text-stone-500 hover:text-stone-900">View All</button>
+          <Link href="/reports" className="text-xs text-stone-500 hover:text-stone-900">View Reports</Link>
         </div>
         <div className="space-y-3">
           {transactions.slice(0, 10).map((tx) => (
@@ -462,7 +483,10 @@ service cloud.firestore {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-stone-900">{tx.description || tx.category}</p>
-                  <p className="text-xs text-stone-400">{tx.date ? format(tx.date.toDate(), 'MMM d, h:mm a') : 'Pending'}</p>
+                  <p className="text-xs text-stone-400">{(() => {
+                    const txDate = toDateSafe(tx.date);
+                    return txDate ? format(txDate, 'MMM d, h:mm a') : 'Pending';
+                  })()}</p>
                 </div>
               </div>
               <div className="flex items-center gap-4">

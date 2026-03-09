@@ -3,21 +3,45 @@
 import { useAuth } from '@/components/auth-provider';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { motion } from 'motion/react';
 import { ArrowLeft, Calendar, TrendingUp, TrendingDown, Receipt } from 'lucide-react';
-import { format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { format } from 'date-fns';
 import Link from 'next/link';
 
 interface Transaction {
   id: string;
+  userId?: string;
   type: 'income' | 'expense' | 'saving';
   amount: number;
   category: string;
-  date: any;
+  date?: Timestamp | null;
   description: string;
 }
+
+const FIRESTORE_RULES = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /transactions/{transactionId} {
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+    }
+
+    match /settings/{userId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == userId;
+    }
+  }
+}`;
+
+const toDateSafe = (value?: Timestamp | null) => {
+  if (!value || typeof value.toDate !== 'function') return null;
+  const date = value.toDate();
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 interface MonthlyReport {
   monthKey: string; // e.g. "2024-02"
@@ -51,27 +75,22 @@ export default function ReportsPage() {
     }
   }, [user, loading, router]);
 
-  const copyRules = () => {
-    const rules = `rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    // Master Unlock Rule: Allows you to access all your data
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+  const copyRules = async () => {
+    try {
+      await navigator.clipboard.writeText(FIRESTORE_RULES);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy rules', error);
     }
-  }
-}`;
-    navigator.clipboard.writeText(rules);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const generateReports = (txs: Transaction[]) => {
     const grouped: Record<string, MonthlyReport> = {};
 
     txs.forEach(tx => {
-      if (!tx.date) return;
-      const date = tx.date.toDate();
+      const date = toDateSafe(tx.date);
+      if (!date) return;
       const monthKey = format(date, 'yyyy-MM');
       
       if (!grouped[monthKey]) {
@@ -170,26 +189,19 @@ service cloud.firestore {
             </div>
             
             <p className="text-xs text-rose-600 leading-relaxed">
-              Your database is still locked. To fix this instantly, please use the <b>Master Unlock</b> rules below. Copy and paste them into your <b>Firebase Console &gt; Firestore Database &gt; Rules</b> tab.
+              Your database rules need to allow each signed-in user to access <b>only their own data</b>. Copy these rules into <b>Firebase Console &gt; Firestore Database &gt; Rules</b> and publish them.
             </p>
 
             <div className="relative group">
               <pre className="text-[10px] bg-white border border-rose-100 p-4 rounded-2xl overflow-x-auto text-rose-800 font-mono leading-tight max-h-48">
-{`rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
-    }
-  }
-}`}
+{FIRESTORE_RULES}
               </pre>
               <button 
                 onClick={copyRules}
                 className="absolute top-2 right-2 p-2 bg-stone-900 text-white rounded-lg shadow-lg active:scale-95 transition-all flex items-center gap-2 text-[10px]"
               >
                 {copied ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                {copied ? 'Copied!' : 'Copy Master Rules'}
+                {copied ? 'Copied!' : 'Copy Safe Rules'}
               </button>
             </div>
 
