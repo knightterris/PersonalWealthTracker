@@ -1,48 +1,51 @@
-'use client';
+"use client";
 
-import { useAuth } from '@/components/auth-provider';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db, auth } from '@/lib/firebase';
-import { motion, AnimatePresence } from 'motion/react';
-import { Plus, ArrowUpRight, ArrowDownLeft, Wallet, LogOut, History, Settings, Target, BarChart3, Calendar, Trash2, Edit2, X, Copy, Check } from 'lucide-react';
-import { format } from 'date-fns';
-import Link from 'next/link';
-import { ResponsiveContainer, AreaChart, Area } from 'recharts';
-
-interface Transaction {
-  id: string;
-  userId?: string;
-  type: 'income' | 'expense' | 'saving';
-  amount: number;
-  category: string;
-  date?: Timestamp | null;
-  description: string;
-}
-
-const FIRESTORE_RULES = `rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /transactions/{transactionId} {
-      allow create: if request.auth != null
-        && request.resource.data.userId == request.auth.uid;
-      allow read, update, delete: if request.auth != null
-        && resource.data.userId == request.auth.uid;
-    }
-
-    match /settings/{userId} {
-      allow read, write: if request.auth != null
-        && request.auth.uid == userId;
-    }
-  }
-}`;
-
-const toDateSafe = (value?: Timestamp | null) => {
-  if (!value || typeof value.toDate !== 'function') return null;
-  const date = value.toDate();
-  return Number.isNaN(date.getTime()) ? null : date;
-};
+import { useAuth } from "@/components/auth-provider";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  serverTimestamp,
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  deleteDoc,
+} from "firebase/firestore";
+import { db, auth } from "@/lib/firebase";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  Plus,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Wallet,
+  LogOut,
+  History,
+  Settings,
+  Target,
+  BarChart3,
+  Calendar,
+  Trash2,
+  Edit2,
+  X,
+  Copy,
+  Check,
+} from "lucide-react";
+import { format } from "date-fns";
+import Link from "next/link";
+import { ResponsiveContainer, AreaChart, Area } from "recharts";
+import {
+  FIRESTORE_RULES,
+  Transaction,
+  formatTransactionDate,
+  getSignedAmount,
+  toDateSafe,
+} from "@/lib/transactions";
 
 export default function Dashboard() {
   const { user, loading } = useAuth();
@@ -56,43 +59,38 @@ export default function Dashboard() {
   const [dailyLimit, setDailyLimit] = useState<number>(0);
   const [copied, setCopied] = useState(false);
   const [newTx, setNewTx] = useState({
-    type: 'expense' as 'income' | 'expense' | 'saving',
-    amount: '',
-    category: 'Food',
-    description: ''
+    type: "expense" as "income" | "expense" | "saving",
+    amount: "",
+    category: "Food",
+    description: "",
   });
 
-  const incomeCategories = [
-    'Company',
-    'Part time',
-    'Freelance',
-    'Other'
-  ];
+  const incomeCategories = ["Company", "Part time", "Freelance", "Other"];
 
   const expenseCategories = [
-    'Transportation',
-    'Food',
-    'Shopping',
-    'Electric Bill',
-    'Water Bill',
-    'Phone Bill',
-    'Statutory Contributions',
-    'Rent',
-    'Friendly transfer',
-    'Changed to cash',
-    'Balance adjustment',
-    'Other'
+    "Transportation",
+    "Food",
+    "Shopping",
+    "Electric Bill",
+    "Water Bill",
+    "Phone Bill",
+    "Statutory Contributions",
+    "Rent",
+    "Friendly transfer",
+    "Changed to cash",
+    "Balance adjustment",
+    "Other",
   ];
 
   const getCategories = () => {
-    if (newTx.type === 'income') return incomeCategories;
-    if (newTx.type === 'expense') return expenseCategories;
+    if (newTx.type === "income") return incomeCategories;
+    if (newTx.type === "expense") return expenseCategories;
     return [];
   };
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/login');
+      router.push("/login");
     }
   }, [user, loading, router]);
 
@@ -100,16 +98,17 @@ export default function Dashboard() {
     if (!user || !db) return;
 
     const q = query(
-      collection(db, 'transactions'),
-      where('userId', '==', user.uid),
-      orderBy('date', 'desc')
+      collection(db, "transactions"),
+      where("userId", "==", user.uid),
+      orderBy("date", "desc"),
     );
 
-    const unsubscribe = onSnapshot(q, 
+    const unsubscribe = onSnapshot(
+      q,
       (snapshot) => {
-        const txs = snapshot.docs.map(doc => ({
+        const txs = snapshot.docs.map((doc) => ({
           id: doc.id,
-          ...doc.data()
+          ...doc.data(),
         })) as Transaction[];
         setTransactions(txs);
         setPermissionError(false);
@@ -117,19 +116,33 @@ export default function Dashboard() {
       },
       (error) => {
         console.error("Transactions fetch error:", error);
-        if (error.code === 'permission-denied') {
-          console.log("%c TRANSACTIONS PERMISSION DENIED", "background: #991b1b; color: white; padding: 4px;");
-          console.log("%c DEBUG: Your Project ID is: " + process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID, "background: #e0f2fe; color: #075985; font-weight: bold; padding: 4px; border-radius: 4px;");
-          console.log("%c DEBUG: Your UID is: " + user.uid, "background: #fee2e2; color: #991b1b; font-weight: bold; padding: 4px; border-radius: 4px;");
+        if (error.code === "permission-denied") {
+          console.log(
+            "%c TRANSACTIONS PERMISSION DENIED",
+            "background: #991b1b; color: white; padding: 4px;",
+          );
+          console.log(
+            "%c DEBUG: Your Project ID is: " +
+              process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+            "background: #e0f2fe; color: #075985; font-weight: bold; padding: 4px; border-radius: 4px;",
+          );
+          console.log(
+            "%c DEBUG: Your UID is: " + user.uid,
+            "background: #fee2e2; color: #991b1b; font-weight: bold; padding: 4px; border-radius: 4px;",
+          );
           setPermissionError(true);
           setTransactions([]);
-        } else if (error.message.includes('requires an index')) {
+        } else if (error.message.includes("requires an index")) {
           // Extract the link from the error message if possible
-          const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
-          setIndexError(linkMatch ? linkMatch[0] : 'https://console.firebase.google.com');
+          const linkMatch = error.message.match(
+            /https:\/\/console\.firebase\.google\.com[^\s]+/,
+          );
+          setIndexError(
+            linkMatch ? linkMatch[0] : "https://console.firebase.google.com",
+          );
           setTransactions([]);
         }
-      }
+      },
     );
 
     return () => unsubscribe();
@@ -142,15 +155,18 @@ export default function Dashboard() {
 
     const fetchSettings = async () => {
       try {
-        const settingsDoc = await getDoc(doc(firestore, 'settings', user.uid));
+        const settingsDoc = await getDoc(doc(firestore, "settings", user.uid));
         if (settingsDoc.exists()) {
           setDailyLimit(settingsDoc.data().dailyLimit || 0);
         }
         setPermissionError(false);
       } catch (error: any) {
         console.error("Settings fetch error:", error);
-        if (error.code === 'permission-denied') {
-          console.log("%c SETTINGS PERMISSION DENIED", "background: #991b1b; color: white; padding: 4px;");
+        if (error.code === "permission-denied") {
+          console.log(
+            "%c SETTINGS PERMISSION DENIED",
+            "background: #991b1b; color: white; padding: 4px;",
+          );
           setPermissionError(true);
         }
       }
@@ -159,23 +175,29 @@ export default function Dashboard() {
     fetchSettings();
   }, [user]);
 
-  const totals = transactions.reduce((acc, tx) => {
-    if (tx.type === 'income') acc.income += tx.amount;
-    if (tx.type === 'expense') acc.expense += tx.amount;
-    if (tx.type === 'saving') acc.savings += tx.amount;
-    return acc;
-  }, { income: 0, expense: 0, savings: 0 });
+  const totals = transactions.reduce(
+    (acc, tx) => {
+      if (tx.type === "income") acc.income += tx.amount;
+      if (tx.type === "expense") acc.expense += tx.amount;
+      if (tx.type === "saving") acc.savings += tx.amount;
+      return acc;
+    },
+    { income: 0, expense: 0, savings: 0 },
+  );
 
   const balance = totals.income - totals.expense;
 
   const todaySpending = transactions
-    .filter(tx => {
+    .filter((tx) => {
       const txDate = toDateSafe(tx.date);
       const today = new Date();
-      return !!txDate && tx.type === 'expense' && 
-             txDate.getDate() === today.getDate() &&
-             txDate.getMonth() === today.getMonth() &&
-             txDate.getFullYear() === today.getFullYear();
+      return (
+        !!txDate &&
+        tx.type === "expense" &&
+        txDate.getDate() === today.getDate() &&
+        txDate.getMonth() === today.getMonth() &&
+        txDate.getFullYear() === today.getFullYear()
+      );
     })
     .reduce((sum, tx) => sum + tx.amount, 0);
 
@@ -186,32 +208,37 @@ export default function Dashboard() {
     const firestore = db;
 
     if (editingTx) {
-      await updateDoc(doc(firestore, 'transactions', editingTx.id), {
+      await updateDoc(doc(firestore, "transactions", editingTx.id), {
         type: newTx.type,
         amount: parseFloat(newTx.amount),
         category: newTx.category,
         description: newTx.description,
       });
     } else {
-      await addDoc(collection(firestore, 'transactions'), {
+      await addDoc(collection(firestore, "transactions"), {
         userId: user.uid,
         type: newTx.type,
         amount: parseFloat(newTx.amount),
-        category: newTx.category || 'General',
+        category: newTx.category || "General",
         description: newTx.description,
-        date: serverTimestamp()
+        date: serverTimestamp(),
       });
     }
 
     setIsAdding(false);
     setEditingTx(null);
-    setNewTx({ type: 'expense', amount: '', category: 'Food', description: '' });
+    setNewTx({
+      type: "expense",
+      amount: "",
+      category: "Food",
+      description: "",
+    });
   };
 
   const handleDeleteTx = async (id: string) => {
     if (!db) return;
     const firestore = db;
-    await deleteDoc(doc(firestore, 'transactions', id));
+    await deleteDoc(doc(firestore, "transactions", id));
   };
 
   const startEdit = (tx: Transaction) => {
@@ -220,7 +247,7 @@ export default function Dashboard() {
       type: tx.type,
       amount: tx.amount.toString(),
       category: tx.category,
-      description: tx.description
+      description: tx.description,
     });
     setIsAdding(true);
   };
@@ -231,9 +258,13 @@ export default function Dashboard() {
 
     const firestore = db;
 
-    await setDoc(doc(firestore, 'settings', user.uid), {
-      dailyLimit: dailyLimit
-    }, { merge: true });
+    await setDoc(
+      doc(firestore, "settings", user.uid),
+      {
+        dailyLimit: dailyLimit,
+      },
+      { merge: true },
+    );
 
     setIsSettingsOpen(false);
   };
@@ -244,20 +275,23 @@ export default function Dashboard() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error('Failed to copy rules', error);
+      console.error("Failed to copy rules", error);
     }
   };
 
   if (loading || !user) return null;
 
   // Prepare chart data
-  const chartData = transactions.slice().reverse().map(tx => {
-    const txDate = toDateSafe(tx.date);
-    return {
-      date: txDate ? format(txDate, 'MMM d') : '',
-      amount: tx.type === 'expense' ? -tx.amount : tx.amount,
-    };
-  });
+  const chartData = transactions
+    .slice()
+    .reverse()
+    .map((tx) => {
+      const txDate = toDateSafe(tx.date);
+      return {
+        date: txDate ? format(txDate, "MMM d") : "",
+        amount: getSignedAmount(tx),
+      };
+    });
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-stone-50 pb-24">
@@ -267,23 +301,23 @@ export default function Dashboard() {
           <h1 className="text-xl font-medium text-stone-900">ZenWealth</h1>
           <div className="flex items-center gap-2 text-stone-500">
             <Calendar className="w-3 h-3" />
-            <p className="text-xs">{format(new Date(), 'EEEE, MMMM do')}</p>
+            <p className="text-xs">{format(new Date(), "EEEE, MMMM do")}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link 
+          <Link
             href="/reports"
             className="p-2 text-stone-400 hover:text-stone-900 transition-colors"
           >
             <BarChart3 className="w-5 h-5" />
           </Link>
-          <button 
+          <button
             onClick={() => setIsSettingsOpen(true)}
             className="p-2 text-stone-400 hover:text-stone-900 transition-colors"
           >
             <Settings className="w-5 h-5" />
           </button>
-          <button 
+          <button
             onClick={() => auth?.signOut()}
             className="p-2 text-stone-400 hover:text-stone-900 transition-colors"
           >
@@ -301,40 +335,57 @@ export default function Dashboard() {
               </div>
               <p className="text-sm font-semibold">Firestore Rules Required</p>
             </div>
-            
+
             <p className="text-xs text-rose-600 leading-relaxed">
-              Your database rules need to allow each signed-in user to access <b>only their own data</b>. Copy these rules into <b>Firebase Console &gt; Firestore Database &gt; Rules</b> and publish them.
+              Your database rules need to allow each signed-in user to access{" "}
+              <b>only their own data</b>. Copy these rules into{" "}
+              <b>Firebase Console &gt; Firestore Database &gt; Rules</b> and
+              publish them.
             </p>
 
             <div className="bg-white/50 p-3 rounded-xl border border-rose-100 space-y-2">
               <div>
-                <p className="text-[10px] text-rose-400 uppercase tracking-widest mb-1">Your Project ID</p>
-                <code className="text-xs text-rose-800 font-mono">{process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}</code>
+                <p className="text-[10px] text-rose-400 uppercase tracking-widest mb-1">
+                  Your Project ID
+                </p>
+                <code className="text-xs text-rose-800 font-mono">
+                  {process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}
+                </code>
               </div>
               <div>
-                <p className="text-[10px] text-rose-400 uppercase tracking-widest mb-1">Your User ID (UID)</p>
-                <code className="text-xs text-rose-800 break-all font-mono">{user.uid}</code>
+                <p className="text-[10px] text-rose-400 uppercase tracking-widest mb-1">
+                  Your User ID (UID)
+                </p>
+                <code className="text-xs text-rose-800 break-all font-mono">
+                  {user.uid}
+                </code>
               </div>
               <p className="text-[9px] text-rose-400 italic">
-                Make sure you are editing the Rules for the Project ID shown above.
+                Make sure you are editing the Rules for the Project ID shown
+                above.
               </p>
             </div>
 
             <div className="relative group">
               <pre className="text-[10px] bg-white border border-rose-100 p-4 rounded-2xl overflow-x-auto text-rose-800 font-mono leading-tight max-h-48">
-{FIRESTORE_RULES}
+                {FIRESTORE_RULES}
               </pre>
-              <button 
+              <button
                 onClick={copyRules}
                 className="absolute top-2 right-2 p-2 bg-stone-900 text-white rounded-lg shadow-lg active:scale-95 transition-all flex items-center gap-2 text-[10px]"
               >
-                {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                {copied ? 'Copied!' : 'Copy Safe Rules'}
+                {copied ? (
+                  <Check className="w-3 h-3" />
+                ) : (
+                  <Copy className="w-3 h-3" />
+                )}
+                {copied ? "Copied!" : "Copy Safe Rules"}
               </button>
             </div>
 
             <p className="text-[10px] text-rose-400 italic">
-              After clicking &quot;Publish&quot; in the Firebase Console, refresh this page.
+              After clicking &quot;Publish&quot; in the Firebase Console,
+              refresh this page.
             </p>
           </div>
         </section>
@@ -343,13 +394,17 @@ export default function Dashboard() {
       {indexError && (
         <section className="px-6 mb-6">
           <div className="bg-amber-50 border border-amber-100 p-5 rounded-3xl space-y-3">
-            <p className="text-sm text-amber-700 font-semibold">Database Index Required</p>
-            <p className="text-xs text-amber-600 leading-relaxed">
-              This query requires a composite index to sort your transactions by date. Please click the link below to create it automatically in your Firebase Console:
+            <p className="text-sm text-amber-700 font-semibold">
+              Database Index Required
             </p>
-            <a 
-              href={indexError} 
-              target="_blank" 
+            <p className="text-xs text-amber-600 leading-relaxed">
+              This query requires a composite index to sort your transactions by
+              date. Please click the link below to create it automatically in
+              your Firebase Console:
+            </p>
+            <a
+              href={indexError}
+              target="_blank"
               rel="noopener noreferrer"
               className="inline-block w-full text-center bg-amber-600 text-white py-3 rounded-xl text-xs font-medium shadow-sm active:scale-95 transition-transform"
             >
@@ -364,22 +419,30 @@ export default function Dashboard() {
 
       {/* Balance Card */}
       <section className="px-6 mb-8">
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="bg-stone-900 rounded-3xl p-8 text-white shadow-xl shadow-stone-200"
         >
-          <p className="text-stone-400 text-sm mb-1 font-light uppercase tracking-widest">Cash Amount</p>
-          <h2 className="text-4xl font-light mb-8">${balance.toLocaleString()}</h2>
-          
+          <p className="text-stone-400 text-sm mb-1 font-light uppercase tracking-widest">
+            Cash Amount
+          </p>
+          <h2 className="text-4xl font-light mb-8">
+            ฿{balance.toLocaleString()}
+          </h2>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-white/10 rounded-full">
                 <ArrowDownLeft className="w-4 h-4 text-emerald-400" />
               </div>
               <div>
-                <p className="text-xs text-stone-400 uppercase tracking-tighter">Income</p>
-                <p className="text-sm font-medium">${totals.income.toLocaleString()}</p>
+                <p className="text-xs text-stone-400 uppercase tracking-tighter">
+                  Income
+                </p>
+                <p className="text-sm font-medium">
+                  ฿{totals.income.toLocaleString()}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -387,8 +450,12 @@ export default function Dashboard() {
                 <ArrowUpRight className="w-4 h-4 text-rose-400" />
               </div>
               <div>
-                <p className="text-xs text-stone-400 uppercase tracking-tighter">Expenses</p>
-                <p className="text-sm font-medium">${totals.expense.toLocaleString()}</p>
+                <p className="text-xs text-stone-400 uppercase tracking-tighter">
+                  Expenses
+                </p>
+                <p className="text-sm font-medium">
+                  ฿{totals.expense.toLocaleString()}
+                </p>
               </div>
             </div>
           </div>
@@ -402,24 +469,30 @@ export default function Dashboard() {
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <Target className="w-4 h-4 text-stone-400" />
-                <p className="text-sm font-medium text-stone-900">Daily Usage Limit</p>
+                <p className="text-sm font-medium text-stone-900">
+                  Daily Usage Limit
+                </p>
               </div>
               <p className="text-xs text-stone-500">
-                ${todaySpending.toLocaleString()} / ${dailyLimit.toLocaleString()}
+                ฿{todaySpending.toLocaleString()} / ฿
+                {dailyLimit.toLocaleString()}
               </p>
             </div>
             <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
-              <motion.div 
+              <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${Math.min((todaySpending / dailyLimit) * 100, 100)}%` }}
+                animate={{
+                  width: `${Math.min((todaySpending / dailyLimit) * 100, 100)}%`,
+                }}
                 className={`h-full transition-colors ${
-                  todaySpending > dailyLimit ? 'bg-rose-500' : 'bg-stone-900'
+                  todaySpending > dailyLimit ? "bg-rose-500" : "bg-stone-900"
                 }`}
               />
             </div>
             {todaySpending > dailyLimit && (
               <p className="text-[10px] text-rose-500 font-medium uppercase tracking-wider">
-                Daily limit exceeded by ${(todaySpending - dailyLimit).toLocaleString()}
+                Daily limit exceeded by ฿
+                {(todaySpending - dailyLimit).toLocaleString()}
               </p>
             )}
           </div>
@@ -434,11 +507,15 @@ export default function Dashboard() {
               <Wallet className="w-6 h-6 text-stone-600" />
             </div>
             <div>
-              <p className="text-sm font-medium text-stone-900">Total Savings</p>
+              <p className="text-sm font-medium text-stone-900">
+                Total Savings
+              </p>
               <p className="text-xs text-stone-500">Wealth accumulation</p>
             </div>
           </div>
-          <p className="text-lg font-medium text-emerald-600">${totals.savings.toLocaleString()}</p>
+          <p className="text-lg font-medium text-emerald-600">
+            ฿{totals.savings.toLocaleString()}
+          </p>
         </div>
       </section>
 
@@ -449,11 +526,18 @@ export default function Dashboard() {
             <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="colorAmt" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#1c1917" stopOpacity={0.1}/>
-                  <stop offset="95%" stopColor="#1c1917" stopOpacity={0}/>
+                  <stop offset="5%" stopColor="#1c1917" stopOpacity={0.1} />
+                  <stop offset="95%" stopColor="#1c1917" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <Area type="monotone" dataKey="amount" stroke="#1c1917" fillOpacity={1} fill="url(#colorAmt)" strokeWidth={2} />
+              <Area
+                type="monotone"
+                dataKey="amount"
+                stroke="#1c1917"
+                fillOpacity={1}
+                fill="url(#colorAmt)"
+                strokeWidth={2}
+              />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -463,50 +547,72 @@ export default function Dashboard() {
       <section className="px-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-medium text-stone-900">Recent Activity</h3>
-          <Link href="/reports" className="text-xs text-stone-500 hover:text-stone-900">View Reports</Link>
+          <Link
+            href="/transactions"
+            className="text-xs text-stone-500 hover:text-stone-900"
+          >
+            View All
+          </Link>
         </div>
         <div className="space-y-3">
           {transactions.slice(0, 10).map((tx) => (
-            <motion.div 
+            <motion.div
               key={tx.id}
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
               className="group bg-white border border-stone-100 p-4 rounded-2xl flex items-center justify-between hover:border-stone-300 transition-all"
             >
               <div className="flex items-center gap-4">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                  tx.type === 'income' ? 'bg-emerald-50 text-emerald-600' : 
-                  tx.type === 'expense' ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
-                }`}>
-                  {tx.type === 'income' ? <ArrowDownLeft className="w-5 h-5" /> : 
-                   tx.type === 'expense' ? <ArrowUpRight className="w-5 h-5" /> : <Wallet className="w-5 h-5" />}
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    tx.type === "income"
+                      ? "bg-emerald-50 text-emerald-600"
+                      : tx.type === "expense"
+                        ? "bg-rose-50 text-rose-600"
+                        : "bg-blue-50 text-blue-600"
+                  }`}
+                >
+                  {tx.type === "income" ? (
+                    <ArrowDownLeft className="w-5 h-5" />
+                  ) : tx.type === "expense" ? (
+                    <ArrowUpRight className="w-5 h-5" />
+                  ) : (
+                    <Wallet className="w-5 h-5" />
+                  )}
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-stone-900">{tx.description || tx.category}</p>
-                  <p className="text-xs text-stone-400">{(() => {
-                    const txDate = toDateSafe(tx.date);
-                    return txDate ? format(txDate, 'MMM d, h:mm a') : 'Pending';
-                  })()}</p>
+                  <p className="text-sm font-medium text-stone-900">
+                    {tx.description || tx.category}
+                  </p>
+                  <p className="text-xs text-stone-400">
+                    {formatTransactionDate(tx.date)}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-right">
-                  <p className={`text-sm font-semibold ${
-                    tx.type === 'income' ? 'text-emerald-600' : 
-                    tx.type === 'expense' ? 'text-rose-600' : 'text-blue-600'
-                  }`}>
-                    {tx.type === 'expense' ? '-' : '+'}${tx.amount.toLocaleString()}
+                  <p
+                    className={`text-sm font-semibold ${
+                      tx.type === "income"
+                        ? "text-emerald-600"
+                        : tx.type === "expense"
+                          ? "text-rose-600"
+                          : "text-blue-600"
+                    }`}
+                  >
+                    {tx.type === "expense" ? "-" : "+"}฿
+                    {tx.amount.toLocaleString()}
                   </p>
                   <p className="text-[10px] text-stone-400">{tx.category}</p>
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button 
+                  <button
                     onClick={() => startEdit(tx)}
                     className="p-1.5 text-stone-400 hover:text-stone-900 hover:bg-stone-100 rounded-lg transition-all"
                   >
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
-                  <button 
+                  <button
                     onClick={() => handleDeleteTx(tx.id)}
                     className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
                   >
@@ -526,7 +632,7 @@ export default function Dashboard() {
       </section>
 
       {/* Floating Action Button */}
-      <button 
+      <button
         onClick={() => setIsAdding(true)}
         className="fixed bottom-8 right-8 w-14 h-14 bg-stone-900 text-white rounded-full shadow-2xl flex items-center justify-center active:scale-90 transition-transform z-40"
       >
@@ -537,28 +643,35 @@ export default function Dashboard() {
       <AnimatePresence>
         {isAdding && (
           <>
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsAdding(false)}
               className="fixed inset-0 bg-stone-900/20 backdrop-blur-sm z-50"
             />
-            <motion.div 
-              initial={{ y: '100%' }}
+            <motion.div
+              initial={{ y: "100%" }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="fixed bottom-0 left-0 right-0 bg-white rounded-t-[32px] p-8 z-50 max-w-md mx-auto"
             >
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-medium">{editingTx ? 'Edit Transaction' : 'New Transaction'}</h3>
+                <h3 className="text-xl font-medium">
+                  {editingTx ? "Edit Transaction" : "New Transaction"}
+                </h3>
                 {editingTx && (
-                  <button 
+                  <button
                     onClick={() => {
                       setIsAdding(false);
                       setEditingTx(null);
-                      setNewTx({ type: 'expense', amount: '', category: 'Food', description: '' });
+                      setNewTx({
+                        type: "expense",
+                        amount: "",
+                        category: "Food",
+                        description: "",
+                      });
                     }}
                     className="p-2 text-stone-400 hover:text-stone-900"
                   >
@@ -566,19 +679,26 @@ export default function Dashboard() {
                   </button>
                 )}
               </div>
-              
+
               <form onSubmit={handleAddTx} className="space-y-6">
                 <div className="flex gap-2 p-1 bg-stone-100 rounded-xl">
-                  {(['expense', 'income', 'saving'] as const).map((type) => (
+                  {(["expense", "income", "saving"] as const).map((type) => (
                     <button
                       key={type}
                       type="button"
                       onClick={() => {
-                        const defaultCat = type === 'income' ? 'Company' : type === 'expense' ? 'Food' : '';
+                        const defaultCat =
+                          type === "income"
+                            ? "Company"
+                            : type === "expense"
+                              ? "Food"
+                              : "";
                         setNewTx({ ...newTx, type, category: defaultCat });
                       }}
                       className={`flex-1 py-2 text-xs font-medium rounded-lg capitalize transition-all ${
-                        newTx.type === type ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500'
+                        newTx.type === type
+                          ? "bg-white text-stone-900 shadow-sm"
+                          : "text-stone-500"
                       }`}
                     >
                       {type}
@@ -587,31 +707,39 @@ export default function Dashboard() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs text-stone-400 uppercase tracking-wider">Amount</label>
-                  <input 
+                  <label className="text-xs text-stone-400 uppercase tracking-wider">
+                    Amount
+                  </label>
+                  <input
                     autoFocus
-                    type="number" 
+                    type="number"
                     placeholder="0.00"
                     value={newTx.amount}
-                    onChange={(e) => setNewTx({ ...newTx, amount: e.target.value })}
+                    onChange={(e) =>
+                      setNewTx({ ...newTx, amount: e.target.value })
+                    }
                     className="w-full text-4xl font-light bg-transparent border-none focus:ring-0 p-0 text-stone-900 placeholder:text-stone-200"
                   />
                 </div>
 
                 <div className="space-y-4">
-                  {newTx.type !== 'saving' && (
+                  {newTx.type !== "saving" && (
                     <div className="space-y-2">
-                      <label className="text-xs text-stone-400 uppercase tracking-wider">Category</label>
+                      <label className="text-xs text-stone-400 uppercase tracking-wider">
+                        Category
+                      </label>
                       <div className="grid grid-cols-3 gap-2">
                         {getCategories().map((cat) => (
                           <button
                             key={cat}
                             type="button"
-                            onClick={() => setNewTx({ ...newTx, category: cat })}
+                            onClick={() =>
+                              setNewTx({ ...newTx, category: cat })
+                            }
                             className={`py-2 px-1 text-[10px] font-medium rounded-xl border transition-all ${
-                              newTx.category === cat 
-                                ? 'bg-stone-900 border-stone-900 text-white shadow-md' 
-                                : 'bg-white border-stone-100 text-stone-500 hover:border-stone-300'
+                              newTx.category === cat
+                                ? "bg-stone-900 border-stone-900 text-white shadow-md"
+                                : "bg-white border-stone-100 text-stone-500 hover:border-stone-300"
                             }`}
                           >
                             {cat}
@@ -620,24 +748,32 @@ export default function Dashboard() {
                       </div>
                     </div>
                   )}
-                  
+
                   <div className="space-y-1">
-                    <label className="text-xs text-stone-400 uppercase tracking-wider">Description</label>
-                    <input 
-                      type="text" 
-                      placeholder={newTx.type === 'saving' ? "What are you saving for?" : "Description (optional)"}
+                    <label className="text-xs text-stone-400 uppercase tracking-wider">
+                      Description
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={
+                        newTx.type === "saving"
+                          ? "What are you saving for?"
+                          : "Description (optional)"
+                      }
                       value={newTx.description}
-                      onChange={(e) => setNewTx({ ...newTx, description: e.target.value })}
+                      onChange={(e) =>
+                        setNewTx({ ...newTx, description: e.target.value })
+                      }
                       className="w-full p-4 bg-stone-50 border border-stone-100 rounded-2xl text-sm focus:outline-none focus:border-stone-300 transition-colors"
                     />
                   </div>
                 </div>
 
-                <button 
+                <button
                   type="submit"
                   className="w-full bg-stone-900 text-white py-4 rounded-2xl font-medium shadow-lg active:scale-95 transition-transform"
                 >
-                  {editingTx ? 'Update Transaction' : 'Add Transaction'}
+                  {editingTx ? "Update Transaction" : "Add Transaction"}
                 </button>
               </form>
             </motion.div>
@@ -649,32 +785,36 @@ export default function Dashboard() {
       <AnimatePresence>
         {isSettingsOpen && (
           <>
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsSettingsOpen(false)}
               className="fixed inset-0 bg-stone-900/20 backdrop-blur-sm z-50"
             />
-            <motion.div 
-              initial={{ y: '100%' }}
+            <motion.div
+              initial={{ y: "100%" }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="fixed bottom-0 left-0 right-0 bg-white rounded-t-[32px] p-8 z-50 max-w-md mx-auto"
             >
               <div className="w-12 h-1 bg-stone-200 rounded-full mx-auto mb-8" />
               <h3 className="text-xl font-medium mb-6">Settings</h3>
-              
+
               <form onSubmit={handleUpdateSettings} className="space-y-6">
                 <div className="space-y-1">
-                  <label className="text-xs text-stone-400 uppercase tracking-wider">Daily Usage Limit</label>
-                  <input 
+                  <label className="text-xs text-stone-400 uppercase tracking-wider">
+                    Daily Usage Limit
+                  </label>
+                  <input
                     autoFocus
-                    type="number" 
+                    type="number"
                     placeholder="0.00"
                     value={dailyLimit}
-                    onChange={(e) => setDailyLimit(parseFloat(e.target.value) || 0)}
+                    onChange={(e) =>
+                      setDailyLimit(parseFloat(e.target.value) || 0)
+                    }
                     className="w-full text-4xl font-light bg-transparent border-none focus:ring-0 p-0 text-stone-900 placeholder:text-stone-200"
                   />
                   <p className="text-xs text-stone-400 pt-2">
@@ -682,7 +822,7 @@ export default function Dashboard() {
                   </p>
                 </div>
 
-                <button 
+                <button
                   type="submit"
                   className="w-full bg-stone-900 text-white py-4 rounded-2xl font-medium shadow-lg active:scale-95 transition-transform"
                 >

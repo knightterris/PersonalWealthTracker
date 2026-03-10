@@ -1,6 +1,6 @@
 'use client';
 
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithRedirect } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth-provider';
@@ -27,8 +27,7 @@ export default function LoginPage() {
       return;
     }
     try {
-      await signInWithPopup(auth, googleProvider);
-      router.push('/');
+      await signInWithRedirect(auth, googleProvider);
     } catch (err: any) {
       console.error("Login failed", err);
       if (err.code === 'auth/configuration-not-found') {
