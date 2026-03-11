@@ -1,18 +1,51 @@
 'use client';
 
-import { signInWithRedirect } from 'firebase/auth';
+import {
+  getRedirectResult,
+  signInWithPopup,
+  signInWithRedirect,
+} from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth-provider';
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { LogIn } from 'lucide-react';
+import { Loader2, LogIn } from 'lucide-react';
+
+const getFirebaseAuthErrorMessage = (err: any) => {
+  if (err?.code === 'auth/configuration-not-found') {
+    return 'Google Sign-in is not enabled in your Firebase project. Please enable it in Firebase Console > Authentication > Sign-in method > Google.';
+  }
+
+  if (err?.code === 'auth/unauthorized-domain') {
+    return "This domain is not authorized in your Firebase project. Add your app URL to Firebase Console > Authentication > Settings > Authorized domains.";
+  }
+
+  if (err?.code === 'auth/operation-not-allowed') {
+    return 'Google sign-in is disabled for this Firebase project. Please enable it in Firebase Console.';
+  }
+
+  if (err?.code === 'auth/popup-blocked') {
+    return 'Your browser blocked the Google sign-in popup. Please allow popups and try again.';
+  }
+
+  if (err?.code === 'auth/popup-closed-by-user') {
+    return 'The Google sign-in popup was closed before login finished. Please try again.';
+  }
+
+  if (err?.code === 'auth/account-exists-with-different-credential') {
+    return 'This email is already linked to another sign-in method in Firebase Auth.';
+  }
+
+  return `Login failed: ${err?.message || 'Unknown authentication error.'}`;
+};
 
 export default function LoginPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (user && !loading) {
@@ -20,25 +53,47 @@ export default function LoginPage() {
     }
   }, [user, loading, router]);
 
+  useEffect(() => {
+    if (!auth) return;
+
+    getRedirectResult(auth).catch((err: any) => {
+      console.error('Redirect login failed', err);
+      setError(getFirebaseAuthErrorMessage(err));
+      setIsSubmitting(false);
+    });
+  }, []);
+
   const handleLogin = async () => {
     setError(null);
     if (!auth) {
-      setError("Firebase is not configured. Please add your API keys in the Secrets panel.");
+      setError('Firebase is not configured. Please add your API keys in the Secrets panel.');
       return;
     }
+
+    setIsSubmitting(true);
+
     try {
-      await signInWithRedirect(auth, googleProvider);
+      await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
-      console.error("Login failed", err);
-      if (err.code === 'auth/configuration-not-found') {
-        setError("Google Sign-in is not enabled in your Firebase project. Please enable it in the Firebase Console: Authentication > Sign-in method > Add Google.");
-      } else if (err.code === 'auth/unauthorized-domain') {
-        setError("This domain is not authorized in your Firebase project. Please add the app URLs to the 'Authorized domains' list in the Firebase Console (Authentication > Sign-in method).");
-      } else if (err.code === 'auth/operation-not-allowed') {
-        setError("This operation is not allowed. Please check your Firebase Console settings.");
+      console.error('Popup login failed', err);
+
+      if (
+        err?.code === 'auth/popup-blocked' ||
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request'
+      ) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectError: any) {
+          console.error('Redirect fallback failed', redirectError);
+          setError(getFirebaseAuthErrorMessage(redirectError));
+        }
       } else {
-        setError(`Login failed: ${err.message}`);
+        setError(getFirebaseAuthErrorMessage(err));
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -88,10 +143,17 @@ export default function LoginPage() {
 
         <button
           onClick={handleLogin}
-          className="w-full flex items-center justify-center gap-3 bg-white border border-stone-200 px-6 py-4 rounded-2xl shadow-sm hover:shadow-md transition-all active:scale-95 group"
+          disabled={isSubmitting}
+          className="w-full flex items-center justify-center gap-3 bg-white border border-stone-200 px-6 py-4 rounded-2xl shadow-sm hover:shadow-md transition-all active:scale-95 group disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          <LogIn className="w-5 h-5 text-stone-400 group-hover:text-stone-900 transition-colors" />
-          <span className="font-medium text-stone-700">Continue with Google</span>
+          {isSubmitting ? (
+            <Loader2 className="w-5 h-5 text-stone-400 animate-spin" />
+          ) : (
+            <LogIn className="w-5 h-5 text-stone-400 group-hover:text-stone-900 transition-colors" />
+          )}
+          <span className="font-medium text-stone-700">
+            {isSubmitting ? 'Signing in…' : 'Continue with Google'}
+          </span>
         </button>
 
         <p className="text-xs text-stone-400 px-8 leading-relaxed">
